@@ -33,7 +33,7 @@
   "infrastructure": {
     "engine": "terraform",
     "root": "terraform",
-    "minimum_version": "~> 1.15.9"
+    "minimum_version": ">= 1.15.8, < 1.16.0"
   },
   "lifecycle": {
     "create_supported": true,

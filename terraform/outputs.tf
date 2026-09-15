@@ -1,3 +1,12 @@
+// Hooks run with workload-account AWS credentials, which cannot read the
+// management-account backend. Hand off only the public URL through a local file.
+resource "local_file" "endpoint" {
+  filename        = "${path.module}/.stackrepeat-endpoint"
+  content         = local.endpoint
+  file_permission = "0600"
+  depends_on      = [aws_ssm_parameter.site_url]
+}
+
 output "endpoint" {
   description = "Public HTTPS URL to attach to the workload. The post hook verifies readiness."
   value       = local.endpoint

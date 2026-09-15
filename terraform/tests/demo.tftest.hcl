@@ -34,12 +34,18 @@ mock_provider "random" {
   }
 }
 
+mock_provider "local" {}
+
 run "demo_contract" {
   command = apply
 
   assert {
     condition     = output.endpoint == "https://demo.cloudfront.net"
     error_message = "The workload must expose the HTTPS application endpoint."
+  }
+  assert {
+    condition     = local_file.endpoint.content == output.endpoint && local_file.endpoint.file_permission == "0600"
+    error_message = "The hook must receive the public URL without reading the protected state backend."
   }
   assert {
     condition     = length(aws_instance.demo.user_data_base64) <= 21844

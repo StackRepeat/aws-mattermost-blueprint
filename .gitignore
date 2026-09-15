@@ -27,6 +27,7 @@ override.tf.json
 *_override.tf.json
 terraform/backend.tf
 terraform/providers.tf
+terraform/.stackrepeat-endpoint
 
 # Keep provider selections reproducible
 !**/.terraform.lock.hcl

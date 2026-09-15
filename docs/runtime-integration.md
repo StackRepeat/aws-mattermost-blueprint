@@ -3,6 +3,12 @@
 The public application URL is Terraform output `endpoint`, a non-sensitive
 string such as `https://dexample.cloudfront.net`. No secret is included in it.
 
+Terraform writes the non-sensitive URL into the ignored local file
+`terraform/.stackrepeat-endpoint` with permissions `0600`. The post hook reads
+that file, so it does not need access to the management-account Terraform backend
+while running with workload-account AWS credentials. Terraform recreates the
+file in each fresh executor workspace and removes it on destroy.
+
 The blueprint post hook verifies `/api/v4/system/ping` over HTTPS. Nginx is enabled
 only after the administrator and private demo team have been created, so this
 check does not succeed against an uninitialized public signup screen. Destroy
@@ -26,6 +32,9 @@ the console, updating both the rendered workload executor buildspec and runtime
 Lambda image. The control plane discovers published releases from its S3 catalogue
 on the next request after its default 30-second cache expires; no control-plane
 redeployment is needed. Runtime `v2.3.57` predates the fix and does not include endpoint reporting.
+Use blueprint **v0.1.1 or later**: it supports the runtime's Terraform 1.15.8 and
+includes the local URL handoff. Blueprint v0.1.0 inherited a newer Terraform
+minimum and attempted to read backend state from the workload-role hook.
 Older runtimes use an AWS Console fallback for non-Sandbox
 workloads; this repository alone cannot change that installed runtime behavior.
 The post hook still prints the usable application URL in the deployment log.

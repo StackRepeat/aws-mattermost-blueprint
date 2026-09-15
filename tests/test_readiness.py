@@ -2,7 +2,9 @@
 
 import importlib.util
 import io
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +21,41 @@ class Response(io.BytesIO):
 
 
 class ReadinessTests(unittest.TestCase):
+    def test_hook_reads_handoff_without_using_terraform_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helpers = root / "api_helpers"
+            (helpers / "python").mkdir(parents=True)
+            (root / "terraform").mkdir()
+            (root / "bin").mkdir()
+            hook = helpers / "post-api-helpers.sh"
+            hook.write_text((ROOT / "api_helpers/post-api-helpers.sh").read_text())
+            (helpers / "python/wait_ready.py").write_text("import sys; print(sys.argv[1])\n")
+            endpoint = "https://demo.cloudfront.net"
+            (root / "terraform/.stackrepeat-endpoint").write_text(endpoint)
+            fake_terraform = root / "bin/terraform"
+            fake_terraform.write_text("#!/bin/sh\necho 'Backend access forbidden' >&2\nexit 99\n")
+            fake_terraform.chmod(0o700)
+            result = subprocess.run(
+                ["/bin/bash", str(hook)], capture_output=True, text=True,
+                env={**os.environ, "WORKLOAD_ACTION": "create", "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), endpoint)
+
+    def test_missing_handoff_fails_before_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            helpers = Path(directory) / "api_helpers"
+            helpers.mkdir()
+            hook = helpers / "post-api-helpers.sh"
+            hook.write_text((ROOT / "api_helpers/post-api-helpers.sh").read_text())
+            result = subprocess.run(
+                ["/bin/bash", str(hook)], capture_output=True, text=True,
+                env={**os.environ, "WORKLOAD_ACTION": "create"},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Endpoint handoff is missing", result.stderr)
+
     def test_waits_through_startup_failures(self):
         responses = [URLError("starting"), Response(b'{"status":"FAIL"}'), Response(b'{"status":"OK"}')]
         with patch.object(readiness, "urlopen", side_effect=responses) as request:

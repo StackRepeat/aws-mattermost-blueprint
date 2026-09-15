@@ -8,5 +8,10 @@ case "${WORKLOAD_ACTION:-create}" in
 esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENDPOINT="$(terraform -chdir="$ROOT/terraform" output -raw endpoint)"
+HANDOFF="$ROOT/terraform/.stackrepeat-endpoint"
+if [[ ! -s "$HANDOFF" ]]; then
+  echo "Endpoint handoff is missing; run Terraform apply before the post hook." >&2
+  exit 1
+fi
+ENDPOINT="$(cat "$HANDOFF")"
 python3 "$ROOT/api_helpers/python/wait_ready.py" "$ENDPOINT"
