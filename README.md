@@ -1,142 +1,214 @@
-# AWS blueprint template
+# Mattermost demo · StackRepeat blueprint
 
-Use this repository as the starting point for one AWS Blueprint. The template
-contains the Stack Repeat manifest and runtime scaffolding, but intentionally
-contains no AWS resources or workload-specific implementation.
+[![Blueprint checks](https://github.com/StackRepeat/aws-mattermost-blueprint/actions/workflows/checks.yml/badge.svg)](https://github.com/StackRepeat/aws-mattermost-blueprint/actions/workflows/checks.yml)
 
-This is a **one Blueprint per repository** template. The manifest, Terraform
-root, API helpers, documentation, and release history all belong to the same
-Blueprint. Do not add a directory of multiple Blueprints.
+A small, hands-off [Mattermost](https://github.com/mattermost/mattermost) deployment
+for demonstrating the StackRepeat platform. **No required inputs, domain purchase,
+SSH keys, or manual server setup.** Deployment creates a public HTTPS URL, an
+administrator, and a private **StackRepeat Demo** team.
 
-## Get started
+Built from [StackRepeat/aws-blueprint-template](https://github.com/StackRepeat/aws-blueprint-template)
+at `dc3bc288ea85603abc90efaf819e746a4b50eb8c`. One repository, one public blueprint.
 
-1. Select **Use this template** on GitHub and create a repository named for the
-   Blueprint, for example `document-service-blueprint`.
-2. Replace every `replace-me`, `Replace me`, `OWNER`, and `REPOSITORY` value in
-   `stack-repeat-blueprint.json`.
-3. Define the Blueprint's public inputs, outputs, dependencies, and catalogue
-   visibility in the manifest.
-4. Add the corresponding Terraform implementation to `terraform/`.
-5. Add API helpers only for lifecycle work that cannot be modeled safely in
-   Terraform.
-6. Update this README with the Blueprint's purpose, architecture, inputs,
-   outputs, dependencies, and operating guidance.
-7. Open a pull request. The included GitHub Actions workflow validates the
-   single-Blueprint structure and Terraform on a public `ubuntu-latest` runner
-   without AWS credentials.
+## What it creates
 
-## Repository structure
-
-```text
-.
-├── stack-repeat-blueprint.json       # The one Blueprint manifest
-├── terraform/                        # The one Terraform root
-│   ├── versions.tf
-│   ├── .terraform.lock.hcl
-│   ├── backend.jinja
-│   └── stack-repeat-providers.jinja
-├── api_helpers/
-│   ├── pre-api-helpers.sh
-│   ├── post-api-helpers.sh
-│   └── python/requirements.txt
-├── scripts/validate_blueprint.py
-└── .github/workflows/checks.yml
+```mermaid
+flowchart LR
+    Browser -->|HTTPS / WebSocket| CloudFront
+    CloudFront -->|HTTP + origin token| Nginx
+    subgraph EC2[One small EC2 instance]
+      Nginx -->|localhost| Mattermost
+      Mattermost --> PostgreSQL
+      Mattermost --> Disk[Encrypted 30 GiB disk]
+      PostgreSQL --> Disk
+    end
+    SSM[SSM Parameter Store] -->|Bootstrap configuration| EC2
 ```
 
-The manifest must remain at the repository root and its `infrastructure.root`
-must remain `terraform`. The validation script rejects additional
-`stack-repeat-blueprint.json` files, Terraform roots outside `terraform/`, or
-lifecycle hooks that escape the repository.
+- One `t3a.small` (2 vCPU, 2 GiB RAM), Amazon Linux 2023, and 2 GiB swap.
+- Mattermost Team Edition and PostgreSQL in pinned official Docker images.
+- One public subnet, an internet gateway, and a stable Elastic IP.
+- CloudFront's supplied `https://….cloudfront.net` address and certificate.
+- Nginx accepts requests from CloudFront with this deployment's origin token.
+  Mattermost binds only to localhost; PostgreSQL has no published port. Browser
+  traffic uses HTTPS; the CloudFront-to-origin connection uses HTTP.
+- An encrypted disk, generated credentials in SSM SecureString, and Session Manager
+  access. SSH is closed. No load balancer, NAT gateway, RDS, or paid DNS zone.
 
-The Jinja files are part of the platform runtime contract. The runtime renders
-them with the state backend, region, and target-account role. Do not replace
-them with hard-coded credentials, account IDs, role ARNs, or backend values.
+CloudFront forwards cookies, authorization, query strings and WebSocket headers;
+application caching is disabled. Bootstrap closes public sign-ups before the
+first start and opens the proxy only after creating the admin and team.
 
-## Define the manifest
+## Use in the public catalogue
 
-`stack-repeat-blueprint.json` is the contract between the Blueprint, catalogue,
-and runtime. Keep it synchronized with the Terraform implementation.
+| Field | Value |
+| --- | --- |
+| Source repository | `https://github.com/StackRepeat/aws-mattermost-blueprint` |
+| Release reference | `v0.1.0` (resolve and pin its commit when importing) |
+| Manifest | `stack-repeat-blueprint.json` |
+| Blueprint ID | `blueprint:mattermost-demo` |
+| Visibility | Public |
+| Terraform root | `terraform` |
+| Required inputs | None |
+| Workload URL output | `endpoint` |
 
-- `blueprint` identifies and documents the Blueprint. Use stable, URL-safe IDs.
-- `catalogue` controls discovery and organization access.
-- `runtime` declares the compatible adapter versions and capabilities.
-- `infrastructure` locates the Terraform root and minimum supported version.
-- `lifecycle` declares supported operations and optional hooks.
-- `inputs` lists values a release or requester must provide. A matching
-  Terraform variable should exist for each Terraform-backed input.
-- `outputs` lists values the runtime can report. A matching Terraform output
-  should exist for each `terraform_output` entry.
-- `artifacts` lists files or directories required at runtime.
-- `dependencies` records services, images, network access, baseline resources,
-  or other external capabilities the Blueprint needs.
+Import the repository manifest and publish a catalogue release pinned to its
+commit. Deploy in an **approved demo scope whose effective policies permit public
+HTTPS ingress**. Secure Foundation v1 does not support this public blueprint;
+its restrictions remain enforced.
 
-Do not put secret values in input defaults, Terraform variables, helper source,
-or documentation. Mark sensitive inputs and outputs in the manifest and pass
-their values through the runtime's secret mechanism.
+Automatic **Open workload** linking requires [AWS runtime PR #72](https://github.com/StackRepeat/aws-platform/pull/72)
+that reads Terraform's non-sensitive `endpoint` output after a successful post
+hook. Upgrade both the executor buildspec and runtime Lambda image. An older
+runtime still prints the real URL in build logs, but may attach its AWS Console
+fallback to the workload. See [runtime integration](docs/runtime-integration.md).
 
-## Add Terraform resources
+The template's backend and provider Jinja files are preserved. The platform
+supplies the state backend, region and target-account role, and projects request
+inputs into Terraform. The provisioning role needs EC2/VPC, IAM, SSM and
+CloudFront permissions. Initial downloads require outbound access to Amazon
+Linux repositories, GitHub and Docker Hub.
 
-Add normal `.tf` files directly below `terraform/`, organized by
-responsibility. Modules may live below `terraform/modules/`.
+### Open and sign in
 
-```text
-terraform/
-├── versions.tf
-├── variables.tf
-├── data.tf
-├── network.tf
-├── application.tf
-├── outputs.tf
-└── modules/
-```
+1. Deploy the catalogue release. Allow roughly **10–20 minutes** for CloudFront,
+   container downloads and startup. The post hook waits for the public API and
+   fails the deployment if it never becomes healthy.
+2. Open the workload's `endpoint` URL and sign in as **`demo-admin`**.
+3. Retrieve the generated password from the workload account's SSM parameter
+   named by `admin_credentials_parameter`. Its JSON `password` field is the
+   login password. The parameter also contains the proxy token; keep it private.
 
-When adding resources:
-
-- Use stable Terraform addresses and explicit state moves when renaming them.
-- Avoid assumptions about account IDs, regions, DNS zones, or organization
-  names; obtain them from inputs, data sources, or runtime-provided identity.
-- Pin additional providers in `versions.tf`, run `terraform init -upgrade`, and
-  commit the updated lock file.
-- Make create, update, and destroy behavior agree with the lifecycle flags in
-  the manifest.
-- Keep inputs and outputs narrow. The manifest is a public interface, not a
-  mirror of every internal Terraform value.
-- Never commit credentials, Terraform state, plans, populated `.tfvars` files,
-  or generated backend/provider files.
-
-## Add API helpers
-
-The pre- and post-Terraform entry points are no-ops by default. Use them only
-when an operation cannot be represented safely in Terraform. Keep
-`set -euo pipefail`, make every helper idempotent, and use the runtime AWS
-identity instead of embedded credentials.
-
-Add Python helpers below `api_helpers/python/` and pin any packages in
-`requirements.txt`. If dependencies are installed with hashes in your runtime,
-generate and commit a lock file and add it to the manifest's `artifacts` list.
-
-## Test changes
-
-Install Terraform 1.15.9 or a compatible patch release, then run:
+For example, using an authorized AWS profile for that workload account:
 
 ```bash
-make test
+aws ssm get-parameter \
+  --region "$(terraform -chdir=terraform output -raw aws_region)" \
+  --name "$(terraform -chdir=terraform output -raw admin_credentials_parameter)" \
+  --with-decryption --query Parameter.Value --output text | jq -r .password
 ```
 
-The test command:
+The password is never a Terraform output or printed in deployment logs. Terraform
+state does contain generated secrets, so keep the platform's protected backend.
+Public registration, plugins/calls, email notifications and email verification
+are disabled for this demo. Create any additional users through the administrator
+or local `mmctl`; SMTP is not configured for invitations or password recovery.
 
-- proves there is exactly one root Blueprint manifest;
-- validates required manifest fields, paths, and identifier formats;
-- rejects Terraform files outside the single configured root;
-- checks Terraform formatting and initializes without the runtime backend;
-- validates Terraform without contacting an AWS account; and
-- checks shell helper syntax.
+## Cost
 
-The same checks run for pull requests, pushes to `main`, and manual workflow
-dispatches with read-only repository permissions. After creating a repository
-from this template, you can make `Blueprint checks / Validate` required in its
-branch protection rules.
+Approximate **US East (N. Virginia), Linux On-Demand**, 730 hours/month, before
+tax and traffic, checked September 2026:
+
+| Resource | Approximate monthly cost |
+| --- | ---: |
+| `t3a.small` at $0.0188/hour | $13.72 |
+| One public IPv4 at $0.005/hour | $3.65 |
+| 30 GiB gp3 at $0.08/GiB-month | $2.40 |
+| **Baseline** | **$19.77/month** |
+
+Roughly **$0.03/hour** while deployed. Region prices vary. CloudFront requests
+and transfer, EC2 egress, and any account/platform baseline services are additional;
+small demos may fit available CloudFront free allowances. No free allowance is
+assumed in the baseline above. Sources: [EC2 T3a](https://aws.amazon.com/ec2/instance-types/t3/),
+[public IPv4](https://aws.amazon.com/vpc/pricing/), [EBS](https://aws.amazon.com/ebs/pricing/),
+[CloudFront](https://aws.amazon.com/cloudfront/pricing/).
+
+CPU credit mode is `standard` to avoid surplus credit charges. Sustained activity
+can be throttled. Logs rotate locally, and the demo uses one server without
+autoscaling. **Destroy the workload when the demo ends**: stopping only the
+instance leaves disk and public-IP charges. Destroy also removes the distribution,
+disk, IP, parameters and networking; CloudFront removal can take several minutes.
+
+## Inputs and outputs
+
+The only optional input is `instance_type`, default `t3a.small`. Supported values
+are `t3a.small`, `t3.small`, `t3a.medium`, and `t3.medium`. Use `t3.small` in a region
+without T3a, or a medium size for a busier demonstration. ARM instances are not
+supported by this implementation.
+
+| Output | Purpose |
+| --- | --- |
+| `endpoint` | Public HTTPS URL for the workload |
+| `admin_username` | `demo-admin` |
+| `admin_credentials_parameter` | Reference to the SSM SecureString credential |
+| `aws_region` | Region for credential retrieval and management |
+| `instance_id` | Session Manager and troubleshooting target |
+
+## Lifecycle and demo limits
+
+**Create:** installs Docker and Nginx, verifies the pinned Compose download,
+waits for its CloudFront URL in SSM, generates a local database password, starts
+the containers, creates the administrator/team, then enables public access.
+Bootstrap retries transient failures and runs again after reboots. Containers
+restart automatically after process exits or host restarts.
+
+**Update:** the catalogue does not advertise an update operation because the
+current workload runtime supports create and destroy. Standalone Terraform can
+resize the instance while preserving the root disk; a newly released AMI alone
+does not silently replace the server.
+Changing the bootstrap or image pins **replaces the instance and resets demo
+data**. Inspect the plan before updating. A new release is not an automatic
+in-place database migration.
+
+**Destroy:** deletes the instance, all local messages/uploads/database data and
+the rest of this blueprint's resources. There are no retained backups.
+
+This is for short, low-traffic demonstrations. It has one failure domain,
+local storage, no backups, no managed application upgrades, and no production
+availability commitment. Reboots preserve data; instance replacement and destroy
+do not. Change the initial password after retrieval if the demo will be shared.
+The SSM credential remains the initial password if it is later changed in the UI.
+
+## Run without the platform
+
+With Terraform 1.15.9, AWS CLI credentials for a suitable test account, and an
+approved region:
+
+```bash
+export AWS_REGION=us-east-1
+terraform -chdir=terraform init
+terraform -chdir=terraform apply
+WORKLOAD_ACTION=create bash api_helpers/post-api-helpers.sh
+terraform -chdir=terraform output -raw endpoint
+
+# Clean up when finished; deletes demo data.
+terraform -chdir=terraform destroy
+```
+
+Do not commit generated state, provider/backend files or populated variable files.
+The readiness hook requires Python 3 and uses only its standard library.
+
+## Troubleshooting
+
+Use Session Manager for the exported `instance_id`, then:
+
+```bash
+sudo journalctl -u stackrepeat-mattermost.service --no-pager -n 100
+sudo systemctl restart stackrepeat-mattermost.service
+sudo sh -c 'cd /opt/stackrepeat && docker compose ps'
+```
+
+If bootstrap exhausted its automatic retries, run
+`sudo systemctl reset-failed stackrepeat-mattermost.service` before restarting.
+A failed readiness hook leaves resources running for diagnosis; retry or destroy
+them to stop charges. Avoid printing `.env`, `postgres-password`, credential
+parameters or full container environment settings in shared logs.
+
+## Validation
+
+```bash
+make test          # Manifest, format, Terraform validate, mocked plan and readiness tests
+make smoke-docker # Real pinned images: bootstrap, login, registration block and restart
+```
+
+`make test` creates no AWS resources and is run by GitHub Actions. The opt-in
+Docker smoke test creates and removes its own temporary containers/volumes.
+These checks verify the configuration and application bootstrap; a real AWS
+deployment is still needed to validate account permissions, quotas, CloudFront
+propagation and end-to-end platform execution.
 
 ## License
 
-This template is available under the [Mozilla Public License 2.0](LICENSE).
+Blueprint code is [Mozilla Public License 2.0](LICENSE), inherited from the
+template. Mattermost and the other upstream images retain their own licences;
+this repository deploys them and does not redistribute their source.

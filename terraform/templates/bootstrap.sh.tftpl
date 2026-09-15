@@ -1,0 +1,242 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+install -d -m 0700 /opt/stackrepeat
+cat > /opt/stackrepeat/bootstrap.sh <<'STACKREPEAT_BOOTSTRAP'
+#!/bin/bash
+# Never enable shell tracing: the values fetched from SSM include credentials.
+set -euo pipefail
+umask 077
+cd /opt/stackrepeat
+
+retry() {
+  local attempts="$1"
+  shift
+  local attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if "$@"; then return 0; fi
+    if ((attempt < attempts)); then sleep 10; fi
+  done
+  return 1
+}
+
+retry 5 dnf install -y docker nginx jq openssl
+command -v aws >/dev/null # The standard Amazon Linux 2023 AMI includes AWS CLI v2.
+systemctl enable --now docker
+
+if ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
+  if [ ! -f /swapfile ]; then
+    dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+    chmod 0600 /swapfile
+    mkswap /swapfile >/dev/null
+  fi
+  swapon /swapfile
+fi
+grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+install -d -m 0755 /usr/local/lib/docker/cli-plugins
+if ! echo '${compose_sha256}  /usr/local/lib/docker/cli-plugins/docker-compose' | sha256sum --check --status; then
+  retry 5 curl --fail --silent --show-error --location --connect-timeout 15 --max-time 180 \
+    'https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-x86_64' \
+    --output /opt/stackrepeat/docker-compose.download
+  echo '${compose_sha256}  /opt/stackrepeat/docker-compose.download' | sha256sum --check --status
+  install -m 0755 /opt/stackrepeat/docker-compose.download /usr/local/lib/docker/cli-plugins/docker-compose
+  rm /opt/stackrepeat/docker-compose.download
+fi
+
+# CloudFront is created after this instance. Wait up to 30 minutes for its URL.
+url_ready=false
+for ((attempt = 1; attempt <= 180; attempt++)); do
+  if aws ssm get-parameter --region '${aws_region}' \
+      --name '${site_url_parameter_name}' --query Parameter.Value --output text \
+      > site-url.tmp 2>/dev/null && grep -Eq '^https://[a-z0-9]+\.cloudfront\.net$' site-url.tmp; then
+    url_ready=true
+    break
+  fi
+  sleep 10
+done
+if [ "$url_ready" != true ]; then
+  echo 'The CloudFront URL was not available in SSM within 30 minutes.' >&2
+  exit 1
+fi
+SITE_URL=$(cat site-url.tmp)
+rm site-url.tmp
+retry 6 aws ssm get-parameter --region '${aws_region}' \
+  --name '${credentials_parameter_name}' --with-decryption --query Parameter.Value --output text \
+  > credentials.json
+
+# Restrict values used in config files; credentials themselves never appear in logs.
+jq -e '(.username | test("^[a-z][a-z0-9._-]{2,63}$")) and
+       (.email | test("^[^\\r\\n\\t ]+@[^\\r\\n\\t ]+$")) and
+       (.password | type == "string" and length >= 16 and (test("[\\r\\n]") | not)) and
+       (.origin_token | test("^[A-Za-z0-9]{32,}$"))' credentials.json >/dev/null
+ADMIN_USERNAME=$(jq -r .username credentials.json)
+ADMIN_EMAIL=$(jq -r .email credentials.json)
+ADMIN_PASSWORD=$(jq -r .password credentials.json)
+ORIGIN_TOKEN=$(jq -r .origin_token credentials.json)
+
+# The database password and all application volumes survive bootstrap retries/reboots.
+if [ ! -s postgres-password ]; then openssl rand -hex 32 > postgres-password; fi
+POSTGRES_PASSWORD=$(cat postgres-password)
+install -d -m 0750 volumes/postgres
+for folder in config data logs plugins client-plugins bleve-indexes; do
+  install -d -o 2000 -g 2000 -m 0750 "volumes/mattermost/$folder"
+done
+cat > .env <<ENVIRONMENT
+COMPOSE_PROJECT_NAME=stackrepeat-mattermost
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+MM_SQLSETTINGS_DATASOURCE=postgres://mattermost:$POSTGRES_PASSWORD@postgres:5432/mattermost?sslmode=disable&connect_timeout=10
+MM_SERVICESETTINGS_SITEURL=$SITE_URL
+ENVIRONMENT
+
+cat > compose.yaml <<'COMPOSE'
+services:
+  postgres:
+    image: ${postgres_image}
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_USER: mattermost
+      POSTGRES_DB: mattermost
+      POSTGRES_PASSWORD: $${POSTGRES_PASSWORD}
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mattermost -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  mattermost:
+    image: ${mattermost_image}
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["127.0.0.1:8065:8065"]
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: $${MM_SQLSETTINGS_DATASOURCE}
+      MM_SQLSETTINGS_MAXOPENCONNS: "20"
+      MM_SQLSETTINGS_MAXIDLECONNS: "10"
+      MM_SERVICESETTINGS_SITEURL: $${MM_SERVICESETTINGS_SITEURL}
+      MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
+      MM_SERVICESETTINGS_ENABLEDESKTOPLANDINGPAGE: "false"
+      MM_TEAMSETTINGS_ENABLEUSERCREATION: "false"
+      MM_TEAMSETTINGS_ENABLEOPENSERVER: "false"
+      MM_TEAMSETTINGS_ENABLETEAMCREATION: "false"
+      MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS: "false"
+      MM_EMAILSETTINGS_REQUIREEMAILVERIFICATION: "false"
+      MM_LOGSETTINGS_ENABLEFILE: "false"
+      MM_LOGSETTINGS_CONSOLELEVEL: INFO
+      MM_PLUGINSETTINGS_ENABLE: "false"
+      MM_LOGSETTINGS_ENABLEDIAGNOSTICS: "false"
+      MM_FILESETTINGS_MAXFILESIZE: "10485760"
+      MM_BLEVESETTINGS_INDEXDIR: /mattermost/bleve-indexes
+      GOMEMLIMIT: 1200MiB
+    volumes:
+      - ./volumes/mattermost/config:/mattermost/config
+      - ./volumes/mattermost/data:/mattermost/data
+      - ./volumes/mattermost/logs:/mattermost/logs
+      - ./volumes/mattermost/plugins:/mattermost/plugins
+      - ./volumes/mattermost/client-plugins:/mattermost/client/plugins
+      - ./volumes/mattermost/bleve-indexes:/mattermost/bleve-indexes
+    healthcheck:
+      test: ["CMD", "/mattermost/bin/mmctl", "system", "status", "--local"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+COMPOSE
+
+retry 5 docker compose pull
+docker compose up -d
+retry 90 curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8065/api/v4/system/ping >/dev/null
+mmctl() { docker compose exec -T mattermost /mattermost/bin/mmctl --local "$@"; }
+retry 12 mmctl system status >/dev/null
+
+mmctl user list --all --json > users.json
+if ! jq -e --arg username "$ADMIN_USERNAME" '(. // []) | any(.[]; .username == $username)' users.json >/dev/null; then
+  mmctl user create --username "$ADMIN_USERNAME" --email "$ADMIN_EMAIL" \
+    --password "$ADMIN_PASSWORD" --system-admin --email-verified --disable-welcome-email >/dev/null
+fi
+mmctl team list --json > teams.json
+if ! jq -e '(. // []) | any(.[]; .name == "stackrepeat-demo")' teams.json >/dev/null; then
+  mmctl team create --name stackrepeat-demo --display-name 'StackRepeat Demo' \
+    --email "$ADMIN_EMAIL" --private >/dev/null
+fi
+mmctl team users add stackrepeat-demo "$ADMIN_USERNAME" >/dev/null
+rm -f credentials.json users.json teams.json
+unset ADMIN_PASSWORD POSTGRES_PASSWORD
+
+# Only publish nginx after the administrator and team exist. On reboot its last
+# working config remains usable while the idempotent bootstrap checks the app.
+cat > /etc/nginx/nginx.conf <<NGINX
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /run/nginx.pid;
+events { worker_connections 1024; }
+http {
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+  access_log off;
+  server_tokens off;
+  map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
+  server {
+    listen 80 default_server;
+    server_name _;
+    client_max_body_size 10m;
+    if (\$http_x_stackrepeat_origin != "$ORIGIN_TOKEN") { return 403; }
+    location / {
+      proxy_pass http://127.0.0.1:8065;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto https;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
+      proxy_read_timeout 3600s;
+      proxy_send_timeout 3600s;
+      proxy_buffering off;
+    }
+  }
+}
+NGINX
+unset ORIGIN_TOKEN
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+touch /opt/stackrepeat/ready
+echo 'Mattermost administrator, demo team, and public proxy are ready.'
+STACKREPEAT_BOOTSTRAP
+chmod 0700 /opt/stackrepeat/bootstrap.sh
+
+cat > /etc/systemd/system/stackrepeat-mattermost.service <<'SYSTEMD'
+[Unit]
+Description=Bootstrap the StackRepeat Mattermost demo
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=4h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/opt/stackrepeat/bootstrap.sh
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=60min
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD
+systemctl daemon-reload
+systemctl enable --now --no-block stackrepeat-mattermost.service

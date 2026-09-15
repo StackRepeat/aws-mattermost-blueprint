@@ -2,15 +2,19 @@
   "manifest_version": "1.0",
   "blueprint": {
     "contract_version": "1.0",
-    "blueprint_id": "blueprint:replace-me",
-    "name": "Replace me",
-    "owner_organisation_id": "organisation:replace-me",
-    "summary": "Replace with a one-line description of the Blueprint.",
-    "description": "Replace with a complete description of the capability this Blueprint deploys.",
+    "blueprint_id": "blueprint:mattermost-demo",
+    "name": "Mattermost demo",
+    "owner_organisation_id": "organisation:stack-repeat",
+    "summary": "A low-cost, automatically configured Mattermost demo with a public HTTPS URL.",
+    "description": "Runs Mattermost Team Edition and PostgreSQL together on one small EC2 instance, fronted by CloudFront for a domain-free HTTPS address. Automatically creates an administrator and private demo team. Local data survives reboots; instance replacement and destroy remove the demo data. Intended for platform demonstrations, not production.",
     "tags": [
-      "aws"
+      "aws",
+      "mattermost",
+      "collaboration",
+      "demo",
+      "low-cost"
     ],
-    "documentation_url": "https://github.com/OWNER/REPOSITORY"
+    "documentation_url": "https://github.com/StackRepeat/aws-mattermost-blueprint"
   },
   "catalogue": {
     "visibility": "public",
@@ -33,20 +37,120 @@
   },
   "lifecycle": {
     "create_supported": true,
-    "update_supported": true,
+    "update_supported": false,
     "destroy_supported": true,
     "pre_hook": "api_helpers/pre-api-helpers.sh",
     "post_hook": "api_helpers/post-api-helpers.sh"
   },
-  "inputs": [],
-  "outputs": [],
+  "inputs": [
+    {
+      "name": "instance_type",
+      "value_type": "string",
+      "description": "Small x86 demo server. Choose t3.small where t3a is unavailable, or medium for more memory.",
+      "required": false,
+      "sensitive": false,
+      "default": "t3a.small",
+      "allowed_values": [
+        "t3a.small",
+        "t3.small",
+        "t3a.medium",
+        "t3.medium"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "endpoint",
+      "value_type": "string",
+      "description": "Public HTTPS Mattermost URL, verified by the post hook and available to attach to the workload.",
+      "sensitive": false,
+      "source": "terraform_output"
+    },
+    {
+      "name": "admin_username",
+      "value_type": "string",
+      "description": "Automatically created administrator username: demo-admin.",
+      "sensitive": false,
+      "source": "terraform_output"
+    },
+    {
+      "name": "admin_credentials_parameter",
+      "value_type": "string",
+      "description": "SSM SecureString parameter name containing the initial administrator password. This output is a reference, never the credential value.",
+      "sensitive": false,
+      "source": "terraform_output"
+    },
+    {
+      "name": "aws_region",
+      "value_type": "string",
+      "description": "AWS region containing the instance and administrator credential.",
+      "sensitive": false,
+      "source": "terraform_output"
+    },
+    {
+      "name": "instance_id",
+      "value_type": "string",
+      "description": "EC2 instance ID for Systems Manager access and troubleshooting.",
+      "sensitive": false,
+      "source": "terraform_output"
+    }
+  ],
   "artifacts": [
     {
       "name": "terraform_root",
       "path": "terraform",
       "artifact_type": "terraform",
-      "description": "Terraform composition for this Blueprint."
+      "description": "Terraform configuration and host bootstrap template for Mattermost."
+    },
+    {
+      "name": "lifecycle_helpers",
+      "path": "api_helpers",
+      "artifact_type": "configuration",
+      "description": "Idempotent lifecycle entry points and dependency-free HTTPS readiness check."
     }
   ],
-  "dependencies": []
+  "dependencies": [
+    {
+      "name": "public_demo_policy",
+      "dependency_type": "runtime_capability",
+      "reference": "Effective workload policy permits public HTTPS ingress",
+      "required": true,
+      "description": "Deploy in an approved demo scope. Secure Foundation v1 public-ingress restrictions remain enforced and are incompatible with this blueprint."
+    },
+    {
+      "name": "workload_endpoint_reporting",
+      "dependency_type": "runtime_capability",
+      "reference": "Runtime consumes the non-sensitive Terraform endpoint output",
+      "required": true,
+      "description": "Automatic workload linking needs the runtime endpoint-reporting update. The post hook prints the URL on older runtimes."
+    },
+    {
+      "name": "aws_services",
+      "dependency_type": "aws_service",
+      "reference": "EC2, VPC, IAM, SSM Parameter Store, CloudFront",
+      "required": true,
+      "description": "Target-account provisioning role may create and destroy these resources. No existing VPC, DNS zone, certificate, SSH key, or paid Mattermost licence is required. Standard AWS commercial regions with t3/t3a and CloudFront origin-facing prefix lists are supported."
+    },
+    {
+      "name": "bootstrap_downloads",
+      "dependency_type": "network",
+      "reference": "Amazon Linux repositories, GitHub Docker Compose releases, Docker Hub",
+      "required": true,
+      "description": "Outbound internet access for initial package installation and pinned container downloads. Docker Hub anonymous pull limits can delay startup."
+    },
+    {
+      "name": "mattermost",
+      "dependency_type": "container_image",
+      "reference": "mattermost/mattermost-team-edition:11.10.1",
+      "required": true,
+      "description": "Official Team Edition image pinned by digest in terraform/main.tf."
+    },
+    {
+      "name": "postgresql",
+      "dependency_type": "container_image",
+      "reference": "postgres:17.10-alpine",
+      "required": true,
+      "description": "Official PostgreSQL image pinned by digest in terraform/main.tf."
+    }
+  ]
 }
