@@ -57,9 +57,12 @@ commit. Deploy in an **approved demo scope whose effective policies permit publi
 HTTPS ingress**. Secure Foundation v1 does not support this public blueprint;
 its restrictions remain enforced.
 
-Automatic **Open workload** linking requires [AWS runtime PR #72](https://github.com/StackRepeat/aws-platform/pull/72)
-that reads Terraform's non-sensitive `endpoint` output after a successful post
-hook. Upgrade both the executor buildspec and runtime Lambda image. An older
+Automatic **Open workload** linking uses the endpoint reporting change merged in
+[AWS runtime PR #72](https://github.com/StackRepeat/aws-platform/pull/72)
+(`24abaca75858a661ee1658467274e5e86a37f2ab`). It reads Terraform's non-sensitive
+`endpoint` output after a successful post hook. Publish a runtime release containing
+that commit and upgrade both the executor buildspec and runtime Lambda image.
+Runtime `v2.3.57` predates the change. An older
 runtime still prints the real URL in build logs, but may attach its AWS Console
 fallback to the workload. See [runtime integration](docs/runtime-integration.md).
 

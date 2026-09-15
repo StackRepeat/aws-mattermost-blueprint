@@ -9,7 +9,8 @@ check does not succeed against an uninitialized public signup screen. Destroy
 skips the check entirely.
 
 The companion change in [StackRepeat/aws-platform PR #72](https://github.com/StackRepeat/aws-platform/pull/72)
-adds this runtime contract:
+was merged on 15 September 2026 as
+`24abaca75858a661ee1658467274e5e86a37f2ab`. It adds this runtime contract:
 
 1. After Terraform apply and a successful blueprint post hook, read
    `terraform output -json` inside the executor.
@@ -19,8 +20,11 @@ adds this runtime contract:
    workspace state before sending the existing authenticated `ready` callback.
 4. Send it as `payload.endpoint`; the control plane already consumes that field.
 
-This requires upgrading both the rendered workload executor buildspec and the
-runtime Lambda image. Older runtimes use an AWS Console fallback for non-Sandbox
+Merge does not publish or deploy the runtime: its release workflow runs from
+version tags. Publish a tagged runtime release containing the merge commit, then
+upgrade both the rendered workload executor buildspec and the runtime Lambda
+image. Runtime `v2.3.57` predates the fix and does not include endpoint reporting.
+Older runtimes use an AWS Console fallback for non-Sandbox
 workloads; this repository alone cannot change that installed runtime behavior.
 The post hook still prints the usable application URL in the deployment log.
 
