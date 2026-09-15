@@ -1,0 +1,52 @@
+{
+  "manifest_version": "1.0",
+  "blueprint": {
+    "contract_version": "1.0",
+    "blueprint_id": "blueprint:replace-me",
+    "name": "Replace me",
+    "owner_organisation_id": "organisation:replace-me",
+    "summary": "Replace with a one-line description of the Blueprint.",
+    "description": "Replace with a complete description of the capability this Blueprint deploys.",
+    "tags": [
+      "aws"
+    ],
+    "documentation_url": "https://github.com/OWNER/REPOSITORY"
+  },
+  "catalogue": {
+    "visibility": "public",
+    "allowed_organisation_ids": []
+  },
+  "runtime": {
+    "adapter": "adapter:stackrepeat",
+    "version_constraint": ">=1.0.0,<2.0.0",
+    "required_capabilities": [
+      "account_vending",
+      "terraform",
+      "workspace_destroy",
+      "authenticated_callbacks"
+    ]
+  },
+  "infrastructure": {
+    "engine": "terraform",
+    "root": "terraform",
+    "minimum_version": "~> 1.15.9"
+  },
+  "lifecycle": {
+    "create_supported": true,
+    "update_supported": true,
+    "destroy_supported": true,
+    "pre_hook": "api_helpers/pre-api-helpers.sh",
+    "post_hook": "api_helpers/post-api-helpers.sh"
+  },
+  "inputs": [],
+  "outputs": [],
+  "artifacts": [
+    {
+      "name": "terraform_root",
+      "path": "terraform",
+      "artifact_type": "terraform",
+      "description": "Terraform composition for this Blueprint."
+    }
+  ],
+  "dependencies": []
+}
