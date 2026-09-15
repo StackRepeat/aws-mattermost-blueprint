@@ -20,10 +20,12 @@ was merged on 15 September 2026 as
    workspace state before sending the existing authenticated `ready` callback.
 4. Send it as `payload.endpoint`; the control plane already consumes that field.
 
-Merge does not publish or deploy the runtime: its release workflow runs from
-version tags. Publish a tagged runtime release containing the merge commit, then
-upgrade both the rendered workload executor buildspec and the runtime Lambda
-image. Runtime `v2.3.57` predates the fix and does not include endpoint reporting.
+[AWS runtime v2.3.58](https://github.com/StackRepeat/aws-platform/tree/v2.3.58)
+contains this change. Upgrade the installed platform to **v2.3.58 or later** through
+the console, updating both the rendered workload executor buildspec and runtime
+Lambda image. The control plane discovers published releases from its S3 catalogue
+on the next request after its default 30-second cache expires; no control-plane
+redeployment is needed. Runtime `v2.3.57` predates the fix and does not include endpoint reporting.
 Older runtimes use an AWS Console fallback for non-Sandbox
 workloads; this repository alone cannot change that installed runtime behavior.
 The post hook still prints the usable application URL in the deployment log.
