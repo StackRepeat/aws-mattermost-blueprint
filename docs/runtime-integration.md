@@ -32,7 +32,7 @@ the console, updating both the rendered workload executor buildspec and runtime
 Lambda image. The control plane discovers published releases from its S3 catalogue
 on the next request after its default 30-second cache expires; no control-plane
 redeployment is needed. Runtime `v2.3.57` predates the fix and does not include endpoint reporting.
-Use blueprint **v0.1.1 or later**: it supports the runtime's Terraform 1.15.8 and
+Use blueprint **v0.1.2 or later**: it uses compatible catalogue tags, supports the runtime's Terraform 1.15.8 and
 includes the local URL handoff. Blueprint v0.1.0 inherited a newer Terraform
 minimum and attempted to read backend state from the workload-role hook.
 Older runtimes use an AWS Console fallback for non-Sandbox

@@ -12,7 +12,7 @@
       "mattermost",
       "collaboration",
       "demo",
-      "low-cost"
+      "low_cost"
     ],
     "documentation_url": "https://github.com/StackRepeat/aws-mattermost-blueprint"
   },

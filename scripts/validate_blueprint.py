@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "stack-repeat-blueprint.json"
 BLUEPRINT_ID = re.compile(r"^blueprint:[a-z0-9][a-z0-9-]*$")
 ORGANISATION_ID = re.compile(r"^organisation:[a-z0-9][a-z0-9-]*$")
+BLUEPRINT_TAG = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 class ValidationError(ValueError):
@@ -129,7 +130,16 @@ def validate() -> None:
         )
     for field in ("contract_version", "name", "summary", "description", "documentation_url"):
         require_string(blueprint[field], f"blueprint.{field}")
-    require_list(blueprint["tags"], "blueprint.tags")
+    tags = require_list(blueprint["tags"], "blueprint.tags")
+    if len(tags) > 32:
+        raise ValidationError("blueprint.tags must contain at most 32 tags")
+    for index, value in enumerate(tags):
+        tag = require_string(value, f"blueprint.tags[{index}]")
+        if not BLUEPRINT_TAG.fullmatch(tag):
+            raise ValidationError(
+                f"blueprint.tags[{index}] must start with a lowercase letter and "
+                "contain only lowercase letters, digits, or underscores (1–64 characters)"
+            )
 
     catalogue = require_object(manifest["catalogue"], "catalogue")
     require_string(catalogue.get("visibility"), "catalogue.visibility")

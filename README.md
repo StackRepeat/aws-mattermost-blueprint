@@ -44,7 +44,7 @@ first start and opens the proxy only after creating the admin and team.
 | Field | Value |
 | --- | --- |
 | Source repository | `https://github.com/StackRepeat/aws-mattermost-blueprint` |
-| Release reference | `v0.1.1` (resolve and pin its commit when importing) |
+| Release reference | `v0.1.2` (resolve and pin its commit when importing) |
 | Manifest | `stack-repeat-blueprint.json` |
 | Blueprint ID | `blueprint:mattermost-demo` |
 | Visibility | Public |
